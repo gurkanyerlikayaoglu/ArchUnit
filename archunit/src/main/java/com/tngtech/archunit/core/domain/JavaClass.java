@@ -80,7 +80,7 @@ public class JavaClass implements JavaType, HasName.AndFullName, HasAnnotations<
     private Set<JavaMember> members = emptySet();
     private Set<JavaConstructor> constructors = emptySet();
     private Optional<JavaStaticInitializer> staticInitializer = Optional.absent();
-    private Optional<JavaClass> superclass = Optional.absent();
+    private Superclass superclass = Superclass.ABSENT;
     private final Supplier<List<JavaClass>> allSuperclasses = Suppliers.memoize(new Supplier<List<JavaClass>>() {
         @Override
         public List<JavaClass> get() {
@@ -102,9 +102,7 @@ public class JavaClass implements JavaType, HasName.AndFullName, HasAnnotations<
                 result.add(i);
                 result.addAll(i.getAllInterfaces());
             }
-            if (superclass.isPresent()) {
-                result.addAll(superclass.get().getAllInterfaces());
-            }
+            result.addAll(superclass.getAllInterfaces());
             return result.build();
         }
     });
@@ -657,7 +655,12 @@ public class JavaClass implements JavaType, HasName.AndFullName, HasAnnotations<
 
     @PublicAPI(usage = ACCESS)
     public Optional<JavaClass> getSuperclass() {
-        return superclass;
+        return superclass.getRaw();
+    }
+
+    @PublicAPI(usage = ACCESS)
+    public Optional<JavaType> getGenericSuperclass() {
+        return superclass.getGeneric();
     }
 
     /**
@@ -1311,9 +1314,10 @@ public class JavaClass implements JavaType, HasName.AndFullName, HasAnnotations<
     }
 
     private void completeSuperclassFrom(ImportContext context) {
-        superclass = context.createSuperclass(this);
-        if (superclass.isPresent()) {
-            superclass.get().subclasses.add(this);
+        Optional<JavaClass> rawSuperclass = context.createSuperclass(this);
+        if (rawSuperclass.isPresent()) {
+            rawSuperclass.get().subclasses.add(this);
+            this.superclass = this.superclass.withRawType(rawSuperclass.get());
         }
     }
 
@@ -1330,6 +1334,13 @@ public class JavaClass implements JavaType, HasName.AndFullName, HasAnnotations<
 
     void completeTypeParametersFrom(ImportContext context) {
         typeParameters = context.createTypeParameters(this);
+    }
+
+    void completeGenericSuperclassFrom(ImportContext context) {
+        Optional<JavaType> genericSuperclass = context.createGenericSuperclass(this);
+        if (genericSuperclass.isPresent()) {
+            superclass = superclass.withGenericType(genericSuperclass.get());
+        }
     }
 
     void completeMembers(final ImportContext context) {
@@ -1406,6 +1417,42 @@ public class JavaClass implements JavaType, HasName.AndFullName, HasAnnotations<
     @PublicAPI(usage = ACCESS)
     public boolean isAnonymous() {
         return isAnonymousClass();
+    }
+
+    private static class Superclass {
+        private static final Superclass ABSENT = new Superclass(Optional.<JavaClass>absent(), Optional.<JavaType>absent());
+
+        private final Optional<JavaClass> rawType;
+        private final Optional<JavaType> genericType;
+
+        private Superclass(Optional<JavaClass> rawType, JavaType genericType) {
+            this(rawType, Optional.of(genericType));
+        }
+
+        private Superclass(Optional<JavaClass> rawType, Optional<JavaType> genericType) {
+            this.rawType = rawType;
+            this.genericType = genericType;
+        }
+
+        Optional<JavaClass> getRaw() {
+            return rawType;
+        }
+
+        Optional<JavaType> getGeneric() {
+            return genericType.or(rawType);
+        }
+
+        Set<JavaClass> getAllInterfaces() {
+            return rawType.isPresent() ? rawType.get().getAllInterfaces() : Collections.<JavaClass>emptySet();
+        }
+
+        Superclass withRawType(JavaClass newRawType) {
+            return new Superclass(Optional.of(newRawType), genericType);
+        }
+
+        Superclass withGenericType(JavaType newGenericType) {
+            return new Superclass(rawType, newGenericType);
+        }
     }
 
     public static final class Functions {
